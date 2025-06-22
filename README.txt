@@ -1,0 +1,1 @@
+capture the screen square and it will tell you when it changes.
