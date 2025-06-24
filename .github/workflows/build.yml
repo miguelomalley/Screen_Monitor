@@ -36,12 +36,12 @@ jobs:
     - name: Build with PyInstaller (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        pyinstaller --onefile --windowed --name "ScreenMonitor" --hidden-import plyer.platforms.win.notification screen_monitor.py
+        pyinstaller --onefile --windowed --name "ScreenMonitor" --hidden-import plyer.platforms.win.notification screen_monitor.py --hidden-import requests
     
     - name: Build with PyInstaller (macOS)
       if: matrix.os == 'macos-latest'
       run: |
-        pyinstaller --onefile --windowed --name "ScreenMonitor" --hidden-import plyer.platforms.macosx.notification screen_monitor.py
+        pyinstaller --onefile --windowed --name "ScreenMonitor" --hidden-import plyer.platforms.macosx.notification screen_monitor.py --hidden-import requests
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
