@@ -8,12 +8,13 @@ import threading
 import time
 from plyer import notification
 import io
+import requests
 
 class ScreenMonitor:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Screen Section Monitor")
-        self.root.geometry("400x300")
+        self.root.geometry("400x350")
         
         # vars
         self.selection_coords = None
@@ -22,6 +23,8 @@ class ScreenMonitor:
         self.monitor_thread = None
         self.sensitivity = tk.DoubleVar(value=5.0)  # im diff threshold percents
         self.check_interval = tk.DoubleVar(value=3.0)  # seconds between update
+        self.notify_topic = tk.StringVar(value="")  # ntfy topic
+        self.send_phone_notification = tk.BooleanVar(value=False)  # phone notification toggle
         
         self.setup_ui()
         
@@ -41,9 +44,31 @@ class ScreenMonitor:
         self.coords_label = ttk.Label(selection_frame, text="No area selected")
         self.coords_label.grid(row=0, column=1)
         
+        # Notification section
+        notification_frame = ttk.LabelFrame(main_frame, text="Notification Settings", padding="5")
+        notification_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Phone notification toggle
+        self.phone_notify_check = ttk.Checkbutton(notification_frame, 
+                                                text="Send phone notifications", 
+                                                variable=self.send_phone_notification)
+        self.phone_notify_check.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        ttk.Label(notification_frame, text="Ntfy Topic:").grid(row=1, column=0, sticky=tk.W)
+        self.topic_entry = ttk.Entry(notification_frame, textvariable=self.notify_topic, width=30)
+        self.topic_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
+        
+        # Initially disable topic entry since checkbox is unchecked by default
+        self.topic_entry.config(state=tk.DISABLED)
+        
+        # Bind checkbox to enable/disable topic entry
+        self.send_phone_notification.trace('w', self.toggle_topic_entry)
+        
+        notification_frame.columnconfigure(1, weight=1)
+        
         # Settings section
         settings_frame = ttk.LabelFrame(main_frame, text="Monitor Settings", padding="5")
-        settings_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        settings_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
         ttk.Label(settings_frame, text="Sensitivity (%):").grid(row=0, column=0, sticky=tk.W)
         sensitivity_scale = ttk.Scale(settings_frame, from_=0.1, to=20.0, 
@@ -59,7 +84,7 @@ class ScreenMonitor:
         
         # go time
         control_frame = ttk.Frame(main_frame)
-        control_frame.grid(row=2, column=0, columnspan=2, pady=(0, 10))
+        control_frame.grid(row=3, column=0, columnspan=2, pady=(0, 10))
         
         self.start_btn = ttk.Button(control_frame, text="Start Monitoring", 
                                   command=self.start_monitoring, state=tk.DISABLED)
@@ -71,12 +96,19 @@ class ScreenMonitor:
         
         # what is happening
         self.status_label = ttk.Label(main_frame, text="Status: Ready")
-        self.status_label.grid(row=3, column=0, columnspan=2, sticky=tk.W)
+        self.status_label.grid(row=4, column=0, columnspan=2, sticky=tk.W)
         
         # grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
+    
+    def toggle_topic_entry(self, *args):
+        """Enable/disable topic entry based on phone notification checkbox"""
+        if self.send_phone_notification.get():
+            self.topic_entry.config(state=tk.NORMAL)
+        else:
+            self.topic_entry.config(state=tk.DISABLED)
         
     def start_selection(self):
         self.root.withdraw() 
@@ -184,12 +216,20 @@ class ScreenMonitor:
         if not self.selection_coords or not self.reference_image:
             messagebox.showerror("Error", "Please select a screen area first")
             return
+        
+        # only check topic if phone notifications are enabled
+        if self.send_phone_notification.get() and not self.notify_topic.get().strip():
+            messagebox.showerror("Error", "Please enter a notification topic or disable phone notifications")
+            return
             
         self.monitoring = True
         self.reference_image = pyautogui.screenshot(region=self.selection_coords)
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.select_btn.config(state=tk.DISABLED)
+        self.phone_notify_check.config(state=tk.DISABLED)
+        if self.send_phone_notification.get():
+            self.topic_entry.config(state=tk.DISABLED)
         self.status_label.config(text="Status: Monitoring active")
         
         # begin looking happens here
@@ -201,6 +241,10 @@ class ScreenMonitor:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.select_btn.config(state=tk.NORMAL)
+        self.phone_notify_check.config(state=tk.NORMAL)
+        # re-enable topic entry based on checkbox state
+        if self.send_phone_notification.get():
+            self.topic_entry.config(state=tk.NORMAL)
         self.status_label.config(text="Status: Monitoring stopped")
         
     def monitor_loop(self):
@@ -211,7 +255,7 @@ class ScreenMonitor:
                 
                 # compare to ref
                 if self.images_different(self.reference_image, current_screenshot):
-                    self.send_notification()
+                    self.send_notifications()
                     # update ref
                     self.reference_image = current_screenshot
                     
@@ -258,18 +302,36 @@ class ScreenMonitor:
         
         return percentage_changed > self.sensitivity.get()
         
-    def send_notification(self):
+    def send_notifications(self):
+        """Send notifications to PC and optionally to phone"""
+        message = "Screen change detected!"
+        
+        #PC notification
         try:
             notification.notify(
-                title="Screen Change Detected",
-                message=f"The monitored screen area has changed by more than {self.sensitivity.get():.1f}%",
+                title="Screen Monitor Alert",
+                message=message,
                 timeout=5
             )
+            print("PC notification sent successfully!")
         except Exception as e:
-            print(f"Error sending notification: {e}")
-            # fallback
-            self.root.after(0, lambda: messagebox.showinfo("Change Detected", 
-                                                          "Screen area has changed!"))
+            print(f"Error sending PC notification: {e}")
+        
+        #phone notification only if checkbox is checked
+        if self.send_phone_notification.get():
+            topic = self.notify_topic.get().strip()
+            if topic:
+                url = f"https://ntfy.sh/{topic}"
+                try:
+                    response = requests.post(url, data=message.encode("utf-8"))
+                    if response.status_code == 200:
+                        print("Phone notification sent successfully!")
+                    else:
+                        print("Failed to send phone notification:", response.status_code, response.text)
+                except Exception as e:
+                    print(f"Error sending phone notification: {e}")
+            else:
+                print("No topic specified for phone notification")
             
     def run(self):
         self.root.mainloop()
@@ -285,7 +347,7 @@ if __name__ == "__main__":
     except ImportError as e:
         print(f"Missing required dependency: {e}")
         print("Please install required packages:")
-        print("pip install pyautogui pillow plyer")
+        print("pip install pyautogui pillow plyer requests")
         exit(1)
         
     app = ScreenMonitor()
